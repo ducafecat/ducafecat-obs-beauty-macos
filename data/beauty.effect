@@ -1,0 +1,139 @@
+/*
+ * GPU camera beauty filter (OBS Effect / HLSL-like syntax)
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ * No external AI model or CPU image copies are required.
+ */
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform float2 texel_size;
+uniform float smooth_amount;
+uniform float blur_radius;
+uniform float whiten_amount;
+uniform float rosy_amount;
+uniform float sharpen_amount;
+uniform float skin_only;
+
+sampler_state textureSampler {
+    Filter = Linear;
+    AddressU = Clamp;
+    AddressV = Clamp;
+};
+
+struct VertData {
+    float4 pos : POSITION;
+    float2 uv  : TEXCOORD0;
+};
+
+VertData VSDefault(VertData v_in)
+{
+    VertData v_out;
+    v_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+    v_out.uv = v_in.uv;
+    return v_out;
+}
+
+float4 getPixel(float2 uv)
+{
+    return image.Sample(textureSampler, uv);
+}
+
+float3 straightRGB(float4 rgba)
+{
+    return saturate(rgba.rgb / max(rgba.a, 0.0001));
+}
+
+/* Conservative warm skin-color heuristic in YCbCr-like space.
+ * This is not face detection. It will also match similarly-colored objects.
+ */
+float skinWeight(float3 rgb)
+{
+    float lum = dot(rgb, float3(0.299, 0.587, 0.114));
+    float cr = rgb.r - lum;
+    float cb = rgb.b - lum;
+    float warm = saturate((cr - 0.008) / 0.08) *
+                 saturate((0.24 - cr) / 0.10);
+    float blueBalance = saturate((-cb + 0.010) / 0.08) *
+                        saturate((cb + 0.22) / 0.10);
+    float exposure = saturate((lum - 0.045) / 0.15);
+    return saturate(warm * blueBalance * exposure);
+}
+
+/* Four channels let us return both weighted color and its corresponding sum. */
+float4 bilateralTap(float2 uv, float3 center, float spatialWeight)
+{
+    float4 sampleRGBA = getPixel(uv);
+    float3 neighbor = straightRGB(sampleRGBA);
+    float3 diff = neighbor - center;
+    float edgeWeight = 1.0 / (1.0 + 45.0 * dot(diff, diff));
+    float w = spatialWeight * edgeWeight * sampleRGBA.a;
+    return float4(neighbor * w, w);
+}
+
+float4 PSBeauty(VertData v_in) : TARGET
+{
+    float2 uv = v_in.uv;
+    float4 original = getPixel(uv);
+    if (original.a < 0.001)
+        return original;
+
+    float3 rgb = straightRGB(original);
+    float mask = lerp(1.0, skinWeight(rgb), skin_only);
+    float3 color = rgb;
+
+    /* 13-tap edge-aware smoothing. Uniform branch skips taps when disabled. */
+    if (smooth_amount > 0.001 && mask > 0.005) {
+        float2 stepUV = texel_size * blur_radius;
+        float2 x = float2(stepUV.x, 0.0);
+        float2 y = float2(0.0, stepUV.y);
+        float4 accum = float4(rgb * 1.6, 1.6);
+        accum += bilateralTap(uv + x, rgb, 1.0);
+        accum += bilateralTap(uv - x, rgb, 1.0);
+        accum += bilateralTap(uv + y, rgb, 1.0);
+        accum += bilateralTap(uv - y, rgb, 1.0);
+        accum += bilateralTap(uv + x + y, rgb, 0.70);
+        accum += bilateralTap(uv + x - y, rgb, 0.70);
+        accum += bilateralTap(uv - x + y, rgb, 0.70);
+        accum += bilateralTap(uv - x - y, rgb, 0.70);
+        accum += bilateralTap(uv + x * 2.0, rgb, 0.35);
+        accum += bilateralTap(uv - x * 2.0, rgb, 0.35);
+        accum += bilateralTap(uv + y * 2.0, rgb, 0.35);
+        accum += bilateralTap(uv - y * 2.0, rgb, 0.35);
+        float3 blurred = accum.rgb / max(accum.a, 0.0001);
+        color = lerp(rgb, blurred, saturate(smooth_amount * mask * 0.93));
+    }
+
+    /* Soft brightening: lift dark/mid-tones without simply clipping whites. */
+    float bright = whiten_amount * mask;
+    color = lerp(color, sqrt(saturate(color)), bright * 0.22);
+
+    /* Subtle rosy tint applied mainly to approximately skin-colored pixels. */
+    float rose = rosy_amount * mask;
+    color.r += rose * 0.075;
+    color.g -= rose * 0.012;
+    color.b -= rose * 0.018;
+
+    /* Small-radius unsharp mask restores details (eyes/hair/edges). */
+    float localSharpen = sharpen_amount * mask;
+    if (localSharpen > 0.001) {
+        float2 dx = float2(texel_size.x, 0.0);
+        float2 dy = float2(0.0, texel_size.y);
+        float3 surround = (
+            straightRGB(getPixel(uv + dx)) +
+            straightRGB(getPixel(uv - dx)) +
+            straightRGB(getPixel(uv + dy)) +
+            straightRGB(getPixel(uv - dy))) * 0.25;
+        color += (rgb - surround) * (localSharpen * 0.60);
+    }
+
+    /* OBS filters conventionally use premultiplied alpha. */
+    return float4(saturate(color) * original.a, original.a);
+}
+
+technique Draw
+{
+    pass
+    {
+        vertex_shader = VSDefault(v_in);
+        pixel_shader = PSBeauty(v_in);
+    }
+}
