@@ -1,19 +1,19 @@
 # 猫哥美颜 OBS Beauty Filter for macOS (Apple Silicon / Intel)
 
-一个 **OBS Studio 视频特效滤镜插件（源码项目）**，用 GPU Shader 为摄像头添加实时美颜。
+一个 **OBS Studio 视频特效滤镜插件**，结合 GPU Shader 与 Apple Vision，为 macOS 摄像头画面添加实时美颜。
 
 > 当前为 **0.2.0 实验版**。新增 Apple Vision 单人脸部美颜与五官保护，仍需完成 OBS 真机画面与性能验收。构建脚本生成本地测试 `.plugin`；不包含瘦脸、大眼或像素级皮肤分割。
 
 ## 功能
 
-| 项目           | 参数范围 | 实现                             |
-| -------------- | -------- | -------------------------------- |
-| 磨皮           | 0–100    | GPU 边缘保留平滑（近似双边滤波） |
-| 磨皮半径       | 1–6 px   | 控制采样范围                     |
-| 美白 / 提亮    | 0–100    | 中间调温和提亮                   |
-| 红润           | 0–100    | 轻微暖红色调整                   |
-| 锐化           | 0–100    | 非锐化遮罩恢复细节               |
-| 尽量只处理肤色 | 开 / 关  | 近似肤色遮罩，不是人脸分割       |
+| 项目 | 参数范围 | 实现 |
+| --- | --- | --- |
+| 磨皮 | 0–100 | GPU 边缘保留平滑（近似双边滤波） |
+| 磨皮半径 | 1–6 px | 控制采样范围 |
+| 美白 / 提亮 | 0–100 | 中间调温和提亮 |
+| 红润 | 0–100 | 轻微暖红色调整 |
+| 锐化 | 0–100 | 非锐化遮罩恢复细节 |
+| 尽量只处理肤色 | 开 / 关 | 近似肤色遮罩，不是人脸分割 |
 | 仅处理主要人脸 | 开 / 关 | Apple Vision 五官点形成近似脸部蒙版 |
 | 五官保护 | 开 / 关 | 眼、眉、鼻、口降低磨皮，嘴唇减弱调色 |
 | 调试蒙版 | 开 / 关 | 绿：脸部，蓝：五官，红：嘴唇；默认关闭 |
@@ -31,26 +31,51 @@
 - 五官点不是皮肤分割：额头为保守补足，侧脸、遮挡、胡须、发际线以及运动时的检测延迟可能影响边界。
 - 检测图与美颜来自同一滤镜输入；前置的裁剪、缩放、翻转滤镜会一起进入检测。OBS 场景项上的显示变换由 OBS 在后续统一应用。
 
-## 你需要
+## 兼容性与验证状态
 
-- macOS 12+，M 系列芯片或 Intel Mac
-- **OBS Studio 与构建时使用的 OBS 开发依赖兼容**（OBS 更新后可能需要重编）
-- Xcode 16 或更高版本、Xcode Command Line Tools
-- CMake **3.30 或更高版本**（可通过 Homebrew 安装：`brew install cmake`）
-- Git、Python 3，以及能够下载 GitHub OBS 源码和编译依赖的网络
-- 足够的磁盘空间用于首次构建时下载 OBS 的 SDK 依赖
+| 项目 | 当前状态 |
+| --- | --- |
+| 版本 | 0.2.0 实验版 |
+| 系统目标 | macOS 12+；实际兼容性还取决于所用 OBS 版本与开发依赖 |
+| 二进制架构 | Universal：arm64 + x86_64，已编译并检查 |
+| 本地签名 | ad-hoc 签名及完整性检查通过，未做 Developer ID 签名与公证 |
+| Apple Silicon 集成验证 | M1 Pro + OBS 32.2.2，OpenGL / Metal 独立进程测试通过 |
+| Intel 实机 | 待验证；双架构编译通过不代表已完成 Intel 运行验证 |
+| 真实摄像头效果 / 30 分钟性能 | 待验收 |
 
-先打开终端运行：
+集成验证包含模块加载、Shader 编译、固定蒙版混合、无脸透传、检测图回读、尺寸切换和新旧设置迁移，不等于已完成 OBS 界面下的直播实测。Metal 图形后端通过测试，也不代表本插件提供 Metal / Core ML 皮肤分割。
+
+### 使用已构建的插件
+
+需要兼容的 macOS 与 OBS Studio。安装已有 `.plugin` 无需 Xcode、CMake 或 Python；源码压缩包需要先构建。
+
+当前本地构建产物位于 `dist/`：
+
+- `obs-beauty-macos.plugin`：完整插件 bundle。
+- `obs-beauty-macos-macos-universal.zip`：包含该 bundle 的二进制压缩包。
+
+`dist/` 不纳入 Git；克隆源码后不会自动获得这些产物，需自行构建或使用另行提供的二进制包。
+
+### 从源码构建
+
+- macOS 12+，Apple Silicon 或 Intel Mac。
+- **OBS Studio 与构建时使用的 OBS 开发依赖兼容**；OBS 更新后可能需要重编。
+- Xcode 16+（包含 macOS SDK）及 Command Line Tools；仅安装 Command Line Tools 不能替代完整 Xcode。
+- CMake **3.30+**，可通过 Homebrew 安装：`brew install cmake`。
+- Git、Python 3、可下载 GitHub OBS 源码和编译依赖的网络，以及足够磁盘空间。
+
+先检查构建工具：
 
 ```bash
-xcode-select --install   # 如果已安装会提示无需再次安装
 xcodebuild -version
+xcode-select -p
 cmake --version
+python3 --version
 ```
 
 ## 安装流程速览
 
-适用于 M1 / M2 / M3 / M4 等 Apple Silicon Mac 和 Intel Mac，以下命令均在项目根目录运行。
+以下为源码构建安装流程，命令均在项目根目录运行。已有二进制包可直接跳到“安装”。
 
 1. 安装 CMake，并确认版本不低于 3.30：
 
@@ -62,11 +87,11 @@ cmake --version
 2. 进入解压或克隆得到的项目目录，构建插件（目录名以本机实际名称为准）：
 
    ```bash
-   cd obs-beauty-macos
+   cd ducafecat-obs-beauty-macos
    bash scripts/build-macos.sh
    ```
 
-   保留 `.work/`，以便修复后复用已下载、已编译的 OBS 依赖。如果遇到构建编号错误，请按下文的 `PLUGIN_BUILD_NUMBER` 修复步骤操作。
+   保留 `.work/`，后续构建可复用已下载、已编译的 OBS 依赖。
 
 3. 安装插件：
 
@@ -82,7 +107,7 @@ cmake --version
 
 ```bash
 # 解压下载的 zip，进入项目目录
-cd obs-beauty-macos
+cd ducafecat-obs-beauty-macos
 bash scripts/build-macos.sh
 ```
 
@@ -104,9 +129,19 @@ bash scripts/build-macos.sh
 
 ## 安装
 
+### 从项目构建产物安装
+
+完全退出 OBS，在项目根目录运行：
+
 ```bash
 bash scripts/install-macos.sh
 ```
+
+安装脚本将 `dist/obs-beauty-macos.plugin` 复制到当前用户的 OBS 插件目录。修改源码后需重新构建、安装，并重启 OBS。
+
+### 从二进制压缩包安装
+
+解压 `obs-beauty-macos-macos-universal.zip`，将其中完整的 `obs-beauty-macos.plugin` 复制到下方目录；如果目录不存在，先创建 `plugins` 文件夹。完全退出 OBS 后再替换旧 bundle，随后重新打开 OBS。
 
 等价的手动安装路径：
 
@@ -132,7 +167,11 @@ bash scripts/uninstall-macos.sh
 | 主播正脸特写          |   45 |    3 |   15 |   10 |   10 | 开       |
 | 自然清爽              |   22 |    2 |    8 |    4 |    8 | 开       |
 
-建议先开正常的面部补光，再进行轻量调整。磨皮太大可能让眼镜、嘴唇等细节发软；肤色遮罩可能误伤木色或暖色衣服，也可能漏掉受彩色灯光影响的脸部。
+建议先打开正常的面部补光，以 720p / 30 fps 起步，保持“仅处理主要人脸”和“五官保护”开启，再轻量调整上表参数。
+
+从 0.1.0 升级后，已有滤镜通常保留旧模式；需要在其设置中手动开启“仅处理主要人脸”。无人脸或检测结果过期时没有美颜效果是预期行为。
+
+磨皮过大仍可能让细节发软。肤色限制在旧模式下可能误伤木色或暖色衣服，也可能在彩色灯光下漏掉皮肤；人脸模式下它只进一步约束预测脸部区域内的处理。
 
 ## 项目结构
 
@@ -153,7 +192,8 @@ obs-beauty-macos/
 ├── scripts/
 │   ├── build-macos.sh         # 构建 .plugin + 二进制 zip
 │   ├── install-macos.sh       # 安装插件
-│   └── uninstall-macos.sh     # 卸载插件
+│   ├── uninstall-macos.sh     # 卸载插件
+│   └── face-tracking.cmake    # Objective-C++ 与 Apple 框架链接
 └── tests/
     ├── source_smoke.py       # 静态文件 / 参数校验
     ├── face_behavior.c       # 生产几何与蒙版逻辑的行为测试
@@ -188,36 +228,25 @@ eval "$(/usr/local/bin/brew shellenv)"
 
 ### `set_target_properties called with incorrect number of arguments`
 
-旧版本曾遇到的原因是插件配置缺少 `PLUGIN_BUILD_NUMBER`，导致 Xcode 属性参数不完整。如果错误位置指向模板的 macOS 属性设置，可在 `scripts/build-macos.sh` 中将配置命令改为：
+0.1.0 的构建脚本曾遗漏 `PLUGIN_BUILD_NUMBER`，导致 Xcode 属性参数不完整。当前脚本已显式传入 `-DPLUGIN_BUILD_NUMBER=1`；先确认使用最新脚本，再保留 `.work/` 重跑构建。
+
+若最新脚本仍报错，请检查具体报错文件和行号，排查其他空变量；不能仅凭这段错误文本认定原因相同。
+
+### 移动项目后提示 CMake 缓存路径不匹配
+
+当前脚本会保留原插件缓存，并切换到 `build_macos-local/`。如果该目录也来自旧路径，可以指定新的绝对构建路径：
 
 ```bash
-cmake --preset macos -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO -DPLUGIN_BUILD_NUMBER=1
+BEAUTY_BUILD_DIR="$PWD/.work/obs-plugintemplate/build_macos-fresh" bash scripts/build-macos.sh
 ```
 
-保存后在项目根目录重试：
-
-```bash
-bash scripts/build-macos.sh
-bash scripts/install-macos.sh
-```
-
-保留 `.work/`，无需为这个参数错误重新下载或全量构建 OBS。也可以先对已有模板目录手动配置，再运行项目构建脚本（构建编号会写入 CMake 缓存）：
-
-```bash
-cd .work/obs-plugintemplate
-cmake --preset macos -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO -DPLUGIN_BUILD_NUMBER=1
-cd ../..
-bash scripts/build-macos.sh
-```
-
-如果添加参数后仍报同样错误，应查看报错文件和行号，排查其他空变量，不能仅凭错误文本认定原因相同。
+无需为插件配置目录的路径问题删除整个 `.work/`；依赖是否需要重新构建，由其缓存兼容情况决定。
 
 ### 日志中的 `Disabled Features: Plugin Support`
 
 如果这条信息出现在构建 OBS 依赖时，通常是正常配置：官方模板以 `ENABLE_PLUGINS=OFF`、`ENABLE_FRONTEND=OFF` 构建插件所需的 OBS 开发依赖，不构建完整 OBS 前端和内置插件。它不表示你安装的 OBS 应用禁用了第三方插件，也不能单凭这条日志判断美颜插件构建失败。应以最终是否生成 `.plugin` 和 OBS 加载日志为准。
 
-
-**OBS 的“效果滤镜”列表没有插件**
+### OBS 的“效果滤镜”列表没有插件
 
 - 确认已在本机成功运行 `build-macos.sh` 和 `install-macos.sh`。
 - 通过 Finder → 前往文件夹查看 `.plugin` 的完整路径。
@@ -243,22 +272,28 @@ bash scripts/install-macos.sh
 
 ad-hoc 签名用于本机测试，不等于 Developer ID 签名或 Apple 公证，也不保证从其他机器下载的插件能通过 Gatekeeper。出现安全拦截时先核实来源并检查系统提示及 OBS 日志。
 
-**运行慢 / CPU 或 GPU 占用增加**
+### 运行慢 / CPU 或 GPU 占用增加
 
 - 磨皮半径先从 2 开始，摄像头使用 720p / 30 fps。
-- 将磨皮和锐化滑块降为 0 可以跳过对应的 GPU 采样分支。
+- 将磨皮和锐化滑块降为 0 可以跳过对应的 GPU 采样分支，但人脸模式仍会执行检测回读。
+- 临时关闭“仅处理主要人脸”，对照 CPU / GPU 占用和 OBS 渲染丢帧，判断检测路径的额外成本。
 
-**效果不明显**
+### 效果不明显 / 人脸模式没有变化
 
-- 逐个调整，先观察磨皮 40 / 半径 3；复杂彩光环境下可临时关闭“肤色限制”确认算法是否作用。
+- 确认“仅处理主要人脸”的状态；升级后的已有滤镜可能仍使用旧模式。
+- 人脸模式下先打开“调试蒙版”，检查脸部与五官是否覆盖正确；无脸、严重遮挡或过期结果会保持原图。
+- 尽量正脸入镜并改善补光。复杂彩光下可临时关闭“肤色限制”，逐个调整磨皮 40 / 半径 3 等参数。
+- 检查后关闭调试蒙版，恢复正常画面。
 
-**编译时报 GitHub 下载失败**
+### 编译时报 GitHub 下载失败
 
 - 属于获取 OBS 构建依赖的网络问题，需保证 Mac 可以访问 GitHub 和依赖下载地址。
 
 ## 当前局限 / 下一阶段
 
 本版本已接入 **Apple Vision 人脸关键点、近似脸部蒙版与五官保护**。仍不含瘦脸、大眼、眼袋去除、LUT、Metal / Core ML 皮肤分割；不承诺像素级皮肤边界。下一阶段根据真机回读成本与效果决定是否增加模型分割或跟踪优化。
+
+## 测试与验收
 
 ### 自动化验证
 
