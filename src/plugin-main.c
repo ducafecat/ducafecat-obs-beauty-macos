@@ -82,8 +82,8 @@ static void beauty_update(void *data, obs_data_t *settings)
     filter->face_only = obs_data_get_bool(settings, SET_FACE_ONLY);
     filter->protect = obs_data_get_bool(settings, SET_PROTECT);
     filter->debug = obs_data_get_bool(settings, SET_DEBUG);
-    filter->smooth = (float)obs_data_get_int(settings, SET_SMOOTH) / 100.0f;
-    filter->radius = (float)obs_data_get_int(settings, SET_RADIUS);
+    filter->smooth = (float)obs_data_get_int(settings, SET_SMOOTH) / 100.0f * 2.0f;
+    filter->radius = (float)obs_data_get_int(settings, SET_RADIUS) * 2.0f;
     filter->whiten = (float)obs_data_get_int(settings, SET_WHITEN) / 100.0f;
     filter->rosy = (float)obs_data_get_int(settings, SET_ROSY) / 100.0f;
     filter->sharpen = (float)obs_data_get_int(settings, SET_SHARPEN) / 100.0f;
