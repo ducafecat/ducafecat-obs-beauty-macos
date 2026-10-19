@@ -1,7 +1,7 @@
 /*
  * GPU camera beauty filter (OBS Effect / HLSL-like syntax)
  * SPDX-License-Identifier: GPL-2.0-or-later
- * No external AI model or CPU image copies are required.
+ * Face tracking optionally uses low-resolution CPU readback and Apple Vision.
  */
 uniform float4x4 ViewProj;
 uniform texture2d image;
@@ -12,8 +12,20 @@ uniform float whiten_amount;
 uniform float rosy_amount;
 uniform float sharpen_amount;
 uniform float skin_only;
+uniform texture2d face_mask;
+uniform float face_only;
+uniform float feature_protection;
+uniform float face_freshness;
+uniform float mask_debug;
 
 sampler_state textureSampler {
+    Filter = Linear;
+    AddressU = Clamp;
+    AddressV = Clamp;
+};
+
+/* Use independent sampling state for the geometric mask. */
+sampler_state maskSampler {
     Filter = Linear;
     AddressU = Clamp;
     AddressV = Clamp;
@@ -72,16 +84,31 @@ float4 bilateralTap(float2 uv, float3 center, float spatialWeight)
 float4 PSBeauty(VertData v_in) : TARGET
 {
     float2 uv = v_in.uv;
-    float4 original = getPixel(uv);
+    /* Keep the input's first sample in the entry point. OBS 32 Metal can bind
+     * the mask as the input when the input is referenced only through helpers. */
+    float4 original = image.Sample(textureSampler, uv);
     if (original.a < 0.001)
         return original;
 
     float3 rgb = straightRGB(original);
     float mask = lerp(1.0, skinWeight(rgb), skin_only);
+    float3 areas = float3(1.0, 0.0, 0.0);
+    if (face_only > 0.5) {
+        areas = face_mask.Sample(maskSampler, uv).rgb;
+        mask *= areas.r * face_freshness;
+    }
+    float protectedSmooth = mask * (1.0 - areas.g * feature_protection);
+    float protectedTone = mask * (1.0 - areas.b * feature_protection);
+    if (mask_debug > 0.5) {
+        float3 overlay = float3(areas.b, areas.r, areas.g) * face_freshness;
+        return float4(lerp(rgb, overlay, 0.65) * original.a, original.a);
+    }
+    if (face_only > 0.5 && mask < 0.0001)
+        return original;
     float3 color = rgb;
 
     /* 13-tap edge-aware smoothing. Uniform branch skips taps when disabled. */
-    if (smooth_amount > 0.001 && mask > 0.005) {
+    if (smooth_amount > 0.001 && protectedSmooth > 0.005) {
         float2 stepUV = texel_size * blur_radius;
         float2 x = float2(stepUV.x, 0.0);
         float2 y = float2(0.0, stepUV.y);
@@ -99,15 +126,15 @@ float4 PSBeauty(VertData v_in) : TARGET
         accum += bilateralTap(uv + y * 2.0, rgb, 0.35);
         accum += bilateralTap(uv - y * 2.0, rgb, 0.35);
         float3 blurred = accum.rgb / max(accum.a, 0.0001);
-        color = lerp(rgb, blurred, saturate(smooth_amount * mask * 0.93));
+        color = lerp(rgb, blurred, saturate(smooth_amount * protectedSmooth * 0.93));
     }
 
     /* Soft brightening: lift dark/mid-tones without simply clipping whites. */
-    float bright = whiten_amount * mask;
+    float bright = whiten_amount * protectedTone;
     color = lerp(color, sqrt(saturate(color)), bright * 0.22);
 
     /* Subtle rosy tint applied mainly to approximately skin-colored pixels. */
-    float rose = rosy_amount * mask;
+    float rose = rosy_amount * protectedTone;
     color.r += rose * 0.075;
     color.g -= rose * 0.012;
     color.b -= rose * 0.018;

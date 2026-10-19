@@ -2,7 +2,7 @@
 
 一个 **OBS Studio 视频特效滤镜插件（源码项目）**，用 GPU Shader 为摄像头添加实时美颜。
 
-> 当前为 **0.1.0 实验版**。源码和自动构建脚本已提供，但没有在本环境中的 macOS/OBS 上编译、加载或实测。它不是现成可安装的预编译 `.plugin`；需要在 Mac 上构建。也不是 AI 人脸跟踪 / 瘦脸 / 大眼插件。
+> 当前为 **0.2.0 实验版**。新增 Apple Vision 单人脸部美颜与五官保护，仍需完成 OBS 真机画面与性能验收。构建脚本生成本地测试 `.plugin`；不包含瘦脸、大眼或像素级皮肤分割。
 
 ## 功能
 
@@ -14,8 +14,22 @@
 | 红润           | 0–100    | 轻微暖红色调整                   |
 | 锐化           | 0–100    | 非锐化遮罩恢复细节               |
 | 尽量只处理肤色 | 开 / 关  | 近似肤色遮罩，不是人脸分割       |
+| 仅处理主要人脸 | 开 / 关 | Apple Vision 五官点形成近似脸部蒙版 |
+| 五官保护 | 开 / 关 | 眼、眉、鼻、口降低磨皮，嘴唇减弱调色 |
+| 调试蒙版 | 开 / 关 | 绿：脸部，蓝：五官，红：嘴唇；默认关闭 |
 
-**特点**：没有 Python、没有额外模型、没有 CPU 帧传输、无网络调用。适合普通 SDR 摄像头。HDR/扩展色域输入会安全跳过滤镜。透明视频源并非主要测试对象。
+**特点**：不下载额外模型、无网络推理，使用 macOS 自带 Vision。仅人脸模式会将最长边不超过 640 px 的图像从 GPU 读回 CPU，每秒最多检测 10 次；Vision 在后台串行执行，忙时丢帧，不阻塞渲染等待检测，但 GPU 回读和蒙版生成仍有开销。关闭“仅处理主要人脸”恢复原有 Shader 模式，不进行检测帧回读。
+
+适合普通 SDR 摄像头。HDR/扩展色域输入会安全跳过滤镜。透明视频源并非主要测试对象。
+
+### 人脸模式行为
+
+- 新增滤镜默认开启“仅处理主要人脸”和“五官保护”；带旧版参数且没有新设置的场景按旧模式加载。仅使用默认值且未保存任何旧参数的场景无法与新建滤镜区分，会启用人脸模式。
+- 首次选最大脸，之后优先跟随与上一位置重叠的脸；主要人脸短暂丢失时不会立即跳到旁人。
+- 无脸时保持原图。检测结果在采集时间超过 200 ms 后开始淡出，500 ms 时停止美颜；分辨率变化立即清空蒙版并丢弃旧尺寸结果。
+- “肤色限制”仍可叠加使用。复杂光线下可关闭它，检查脸部蒙版是否正确。
+- 五官点不是皮肤分割：额头为保守补足，侧脸、遮挡、胡须、发际线以及运动时的检测延迟可能影响边界。
+- 检测图与美颜来自同一滤镜输入；前置的裁剪、缩放、翻转滤镜会一起进入检测。OBS 场景项上的显示变换由 OBS 在后续统一应用。
 
 ## 你需要
 
@@ -62,7 +76,7 @@ cmake --version
 
 4. 完全退出并重启 OBS → 选中摄像头 → 滤镜 → 效果滤镜 → 添加 **猫哥美颜 · Beauty Filter**。
 
-> 版本说明：当前仓库脚本中的版本仍为 0.1.0，配置命令尚未显式传入构建编号。如果使用另行发布的 V0.1.1 修复版，请确认其配置命令已包含 `-DPLUGIN_BUILD_NUMBER=1`；当前源码可按下文手动修复。
+> 当前脚本已显式设置 `PLUGIN_BUILD_NUMBER=1`，并编译 Objective-C++ Vision 桥接模块。
 
 ## 构建（macOS）
 
@@ -75,7 +89,7 @@ bash scripts/build-macos.sh
 脚本会：
 
 1. 下载 [OBS 官方 obs-plugintemplate](https://github.com/obsproject/obs-plugintemplate) 到 `.work/`。
-2. 注入 `src/plugin-main.c`、`data/beauty.effect` 和本地化资源，并保留官方模板的 OBS / Qt 依赖版本与哈希。
+2. 注入 C / Objective-C++ 源码、Vision 框架构建配置、Shader 和本地化资源，并保留官方模板的 OBS / Qt 依赖版本与哈希。
 3. 根据模板的 `macos` 预设构建 Universal（arm64 + x86_64）插件。
 4. 把构建产物放到 `dist/obs-beauty-macos.plugin`，并生成 `dist/obs-beauty-macos-macos-universal.zip`。
 5. 使用本机 **ad-hoc codesign** 为本地测试签名；公开分发仍需要独立的 Developer ID 签名与 Apple 公证。
@@ -86,7 +100,7 @@ bash scripts/build-macos.sh
 
 `.work/obs-plugintemplate/` 保存模板源码、下载的依赖和构建目录。修复 CMake 安装、PATH 或插件配置参数后，直接重新运行构建脚本即可；脚本会复用已有模板检出和可用的构建缓存，通常无需重新编译整个 OBS。
 
-不要为了重试而删除 `.work/`。更换 OBS 依赖版本、Xcode 或构建架构时，部分依赖可能需要重新构建；仅在确认缓存损坏或配置不兼容后再清理相关目录。`dist/` 是插件输出目录，不能替代 `.work/` 中的依赖缓存。
+不要为了重试而删除 `.work/`。如果缓存来自另一个源码路径，脚本保留原缓存并改用 `build_macos-local/`。也可通过绝对路径环境变量 `BEAUTY_BUILD_DIR` 指定独立插件构建目录；下载的依赖仍会复用。更换 OBS 依赖版本、Xcode 或构建架构时，部分依赖可能需要重新构建；仅在确认缓存损坏或配置不兼容后再清理相关目录。`dist/` 是插件输出目录，不能替代 `.work/` 中的依赖缓存。
 
 ## 安装
 
@@ -127,7 +141,10 @@ obs-beauty-macos/
 ├── README.md
 ├── LICENSE
 ├── src/
-│   └── plugin-main.c          # OBS C 接口 / 过滤器设置
+│   ├── plugin-main.c          # OBS 接口 / 检测回读 / 蒙版上传
+│   ├── face-tracker.h         # C 桥接与检测结果
+│   ├── face-tracker.mm        # 异步 Vision 检测与跟踪
+│   └── face-mask.c            # 坐标、时效、主脸选择与蒙版
 ├── data/
 │   ├── beauty.effect          # GPU Shader
 │   └── locale/
@@ -138,7 +155,11 @@ obs-beauty-macos/
 │   ├── install-macos.sh       # 安装插件
 │   └── uninstall-macos.sh     # 卸载插件
 └── tests/
-    └── source_smoke.py       # 静态文件 / 参数校验，不等于运行测试
+    ├── source_smoke.py       # 静态文件 / 参数校验
+    ├── face_behavior.c       # 生产几何与蒙版逻辑的行为测试
+    ├── run_face_tests.py     # 编译运行行为与可选原生集成测试
+    ├── vision_lifecycle.mm   # Vision 空白帧 / 检测中销毁
+    └── obs_runtime_smoke.mm  # 独立 OBS GPU 渲染与兼容测试
 ```
 
 ## 故障排查
@@ -167,7 +188,7 @@ eval "$(/usr/local/bin/brew shellenv)"
 
 ### `set_target_properties called with incorrect number of arguments`
 
-本次遇到的原因是插件配置缺少 `PLUGIN_BUILD_NUMBER`，导致 Xcode 属性参数不完整。如果错误位置指向模板的 macOS 属性设置，可在 `scripts/build-macos.sh` 中将配置命令改为：
+旧版本曾遇到的原因是插件配置缺少 `PLUGIN_BUILD_NUMBER`，导致 Xcode 属性参数不完整。如果错误位置指向模板的 macOS 属性设置，可在 `scripts/build-macos.sh` 中将配置命令改为：
 
 ```bash
 cmake --preset macos -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO -DPLUGIN_BUILD_NUMBER=1
@@ -237,7 +258,33 @@ ad-hoc 签名用于本机测试，不等于 Developer ID 签名或 Apple 公证�
 
 ## 当前局限 / 下一阶段
 
-本版本 **不含人脸检测、五官保护专用 mask、瘦脸、大眼、眼袋去除、LUT、Metal/Core ML 人脸分割**。如需精准仅脸部美颜，下一步可加 Apple Vision / Core ML 人脸区域预测、口鼻眼保护蒙版，再与 Shader 混合。此版本也尚未进行 OBS macOS 真机兼容性验证。
+本版本已接入 **Apple Vision 人脸关键点、近似脸部蒙版与五官保护**。仍不含瘦脸、大眼、眼袋去除、LUT、Metal / Core ML 皮肤分割；不承诺像素级皮肤边界。下一阶段根据真机回读成本与效果决定是否增加模型分割或跟踪优化。
+
+### 自动化验证
+
+```bash
+python3 tests/source_smoke.py
+python3 tests/run_face_tests.py
+# macOS 原生 Vision 生命周期测试
+python3 tests/run_face_tests.py --native
+# 完成构建后，使用本机 /Applications/OBS.app 的图形后端运行独立测试进程
+# 不打开摄像头、不加载或修改用户场景；需要可用的图形会话
+python3 tests/run_face_tests.py --obs-bundle dist/obs-beauty-macos.plugin
+# OBS 32 的 Metal 后端（若当前安装版本支持）
+BEAUTY_TEST_GRAPHICS=metal python3 tests/run_face_tests.py --obs-bundle dist/obs-beauty-macos.plugin
+```
+
+行为测试使用生产代码验证 Vision 坐标转换、上下翻转、非方形蒙版、羽化、五官与嘴唇位置、主脸选择、结果过期以及尺寸代次隔离。可选 OBS 集成测试验证模块加载、GPU Shader 编译、固定蒙版的脸部限制 / 五官磨皮保护 / 嘴唇调色保护 / 过期透传、无脸透传、检测图回读、输入尺寸切换及设置迁移。这些测试不替代真实人脸检测与摄像头效果验收。
+
+本次开发验证：M1 Pro 上完成 Universal（arm64 + x86_64）编译，使用 OBS 32.2.2 的 OpenGL 和 Metal 后端通过独立进程集成测试。Intel 实机、真实摄像头视觉效果和 30 分钟性能仍待验收。
+
+### OBS 真机验收（待完成）
+
+- Apple Silicon 和 Intel 分别确认加载、Shader 编译，以及旧场景保持旧模式、新增滤镜默认人脸模式。
+- 720p / 30 fps，测试正脸、侧脸、眼镜、说话、转头、遮挡、出入画和暖色背景；打开蒙版检查五官与翻转方向对齐，脸外不被美颜。
+- 验证前置裁剪 / 缩放 / 翻转、无人脸、多脸进入、切换场景、切换分辨率、反复开关与删除滤镜，以及 HDR 跳过行为。
+- 与旧模式对照记录 CPU / GPU、平均与峰值渲染时间及 OBS 统计窗口的渲染丢帧；连续运行 30 分钟检查内存增长和新增丢帧。目标是 720p / 30 fps 无明显新增渲染丢帧，尚未完成该性能验收。
+- 1080p 和 60 fps 为扩展测试，不提前承诺性能。
 
 ## 参考
 
