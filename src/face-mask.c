@@ -38,6 +38,63 @@ bool face_result_matches(const struct face_result *r, uint64_t generation, uint3
     return r->valid && r->generation==generation && r->width==w && r->height==h;
 }
 static float clamp01(float v) { return fminf(1,fmaxf(0,v)); }
+static struct face_point region_center_pixels(const struct face_region *region, float w, float h)
+{
+    struct face_point center = {0};
+    for (unsigned i=0;i<region->count;++i) {
+        center.x += region->points[i].x*w;
+        center.y += region->points[i].y*h;
+    }
+    center.x /= region->count;
+    center.y /= region->count;
+    return center;
+}
+bool face_complete_forehead(struct face_result *r)
+{
+    struct face_region *jaw=&r->regions[FACE_OUTLINE];
+    const struct face_region *left=&r->regions[FACE_LEFT_BROW];
+    const struct face_region *right=&r->regions[FACE_RIGHT_BROW];
+    const struct face_region *lips=&r->regions[FACE_LIPS];
+    if (!r->width || !r->height || jaw->count<3 || jaw->count>FACE_MAX_POINTS-7 ||
+        left->count<2 || right->count<2 || lips->count<3) return false;
+    float w=(float)r->width,h=(float)r->height;
+    struct face_point a=region_center_pixels(left,w,h);
+    struct face_point b=region_center_pixels(right,w,h);
+    struct face_point mouth=region_center_pixels(lips,w,h);
+    struct face_point brow={(a.x+b.x)*.5f,(a.y+b.y)*.5f};
+    float dx=b.x-a.x,dy=b.y-a.y,span=hypotf(dx,dy);
+    if (span<1) return false;
+    /* Work in pixel coordinates so head roll is independent of frame aspect. */
+    struct face_point down={-dy/span,dx/span};
+    if ((mouth.x-brow.x)*down.x+(mouth.y-brow.y)*down.y<0) {
+        down.x=-down.x; down.y=-down.y;
+    }
+    float chin=0;
+    for (unsigned i=0;i<jaw->count;++i) {
+        struct face_point p=jaw->points[i];
+        chin=fmaxf(chin,(p.x*w-brow.x)*down.x+(p.y*h-brow.y)*down.y);
+    }
+    if (chin<1) return false;
+    struct face_point first={jaw->points[0].x*w,jaw->points[0].y*h};
+    struct face_point last={jaw->points[jaw->count-1].x*w,jaw->points[jaw->count-1].y*h};
+    float baseline=((first.x+last.x)*.5f-brow.x)*down.x+
+                   ((first.y+last.y)*.5f-brow.y)*down.y;
+    /* Vision boxes can start near the brows: estimate forehead height from the
+     * brow-to-chin distance instead of clipping it to the detector's box top.
+     * Cap extension relative to temple width to stay conservative in profile. */
+    float temple_width=hypotf(last.x-first.x,last.y-first.y);
+    float height=fminf(chin*.42f,temple_width*.65f);
+    float amplitude=fmaxf(0,baseline+height);
+    for (unsigned i=1;i<8;++i) {
+        float angle=(float)i*3.14159265358979323846f/8;
+        float t=(1-cosf(angle))*.5f;
+        float lift=amplitude*sinf(angle);
+        struct face_point p={last.x+(first.x-last.x)*t-down.x*lift,
+                             last.y+(first.y-last.y)*t-down.y*lift};
+        jaw->points[jaw->count++]=(struct face_point){clamp01(p.x/w),clamp01(p.y/h)};
+    }
+    return true;
+}
 struct pixel_region {
     unsigned count;
     struct face_point points[FACE_MAX_POINTS];

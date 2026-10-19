@@ -22,7 +22,7 @@ static face_box vision_box(VNFaceObservation *face)
 }
 static void region(face_region &out, VNFaceLandmarkRegion2D *input, face_box box)
 {
-    out.count=(uint32_t)MIN(input.pointCount,FACE_MAX_POINTS-4);
+    out.count=(uint32_t)MIN(input.pointCount,FACE_MAX_POINTS-8);
     for (unsigned i=0;i<out.count;++i)
         out.points[i]=face_from_vision(box,input.normalizedPoints[i].x,input.normalizedPoints[i].y);
 }
@@ -57,14 +57,7 @@ static void detect(face_tracker *t, CVPixelBufferRef buffer, face_result next)
             next.valid=face.confidence>=.5f;
             for (unsigned i=0;i<FACE_REGIONS;++i) next.valid &= next.regions[i].count>=3;
             if (next.valid) {
-                /* Vision's open jaw contour runs temple -> chin -> opposite temple.
-                   Close it across a conservative forehead arch inside the face box. */
-                face_region &outline=next.regions[FACE_OUTLINE];
-                face_point first=outline.points[0],last=outline.points[outline.count-1];
-                float top=next.box.y+next.box.h*.08f;
-                outline.points[outline.count++]={last.x,top+next.box.h*.06f};
-                outline.points[outline.count++]={(last.x+first.x)*.5f,top};
-                outline.points[outline.count++]={first.x,top+next.box.h*.06f};
+                next.valid=face_complete_forehead(&next);
                 if (recent) {
                     double dt=(double)(next.timestamp_ns-t->previous.timestamp_ns)/1e9;
                     float alpha=(float)(1-std::exp(-dt/.08));
@@ -77,7 +70,7 @@ static void detect(face_tracker *t, CVPixelBufferRef buffer, face_result next)
                         }
                     }
                 }
-                t->previous=next;
+                if (next.valid) t->previous=next;
             }
         }
         /* Keep the last valid result on misses so the render-side age fades it out. */

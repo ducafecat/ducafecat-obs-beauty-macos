@@ -37,6 +37,8 @@ int face_select(const struct face_box *boxes, unsigned count, const struct face_
 float face_freshness(uint64_t now, uint64_t timestamp);
 bool face_result_matches(const struct face_result *r, uint64_t generation,
     uint32_t width, uint32_t height);
+/* Close a raw Vision jaw contour using a roll-aware brow/chin forehead estimate. */
+bool face_complete_forehead(struct face_result *result);
 /* RGBA8: R=face, G=feature protection, B=lip protection, A=255. */
 void face_mask_build(const struct face_result *result, uint8_t *rgba, unsigned width, unsigned height);
 #ifdef __cplusplus
